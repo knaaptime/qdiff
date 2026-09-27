@@ -1,139 +1,100 @@
 # qdiff
 
-Track-changes PDFs from two versions of a Quarto paper.
+Track-changes PDFs from two versions of a Quarto paper — the copy journals
+ask for on resubmission, which quarto has no output for.
 
-    qdiff [OLD] [NEW] [options]
+    qdiff OLD [NEW] [options]
 
-`OLD` and `NEW` are either directories on disk (used as they sit, uncommitted
-changes and all) or git refs (commit, branch, tag), materialized as detached
-git worktrees so the old side is the committed state and nothing in the
-source repo is disturbed. `NEW` defaults to the working directory.
+`OLD` and `NEW` are directories (taken as they sit, uncommitted changes
+included) or git refs (commit, branch, tag). `NEW` defaults to the current
+directory.
 
-## Pipeline
+## How it works
 
-1. materialize both sides (dirs pass through; git refs become worktrees)
-2. render each side's entry document to bare typst with the same quarto —
-   rendered in place with `-M keep-typ:true`, because quarto 1.10 deletes
-   the `.typ` under `--output-dir` with `keep-typ` set
-3. normalize the two intermediates and diff them with
-   [typdiff](https://github.com/sou1118/typdiff) (block diff, word-level
-   inside modified blocks) or `--engine=text` (difflib fallback)
-4. compile the diff to PDF with `typst`
+1. **Stage** both sides in scratch space: a directory is cloned (APFS
+   copy-on-write on macOS, so large data trees cost nothing), a ref is
+   checked out as a detached worktree. qdiff never renders in, writes to,
+   or deletes from the author's tree.
+2. **Render** each side to bare typst with the same quarto
+   (`quarto render --to typst -M keep-typ:true`), so toolchain churn
+   cancels and the diff shows what changed in the paper.
+3. **Prepare** each `.typ` as a standalone diff input (see below).
+4. **Diff** with [typst-diff](https://github.com/alexanderkoller/typst-diff),
+   which evaluates both documents — show rules, includes, citations,
+   cross-references — and diffs what typst actually typesets, word by word,
+   with figures, tables, lists and equations diffed as units. Insertions are
+   green, deletions red and struck.
 
-Because both sides are rendered by the same quarto in the same run,
-toolchain churn cancels: the diff shows what changed in the paper, not in
-the template.
+Staged sides and worktrees are removed when qdiff exits, including on
+failure (`--keep` keeps them for inspection).
 
-## Requirements
+## Install
 
-- quarto and a `typst` on PATH for the final compile
-- typdiff on PATH or at `~/.cargo/bin/typdiff` (optional but much better
-  than the `--engine=text` fallback; see typdiff patches below)
+    cargo install --locked --git https://github.com/alexanderkoller/typst-diff typst-diff
+    pip install -e .            # provides the `qdiff` command
+
+Requires quarto on PATH. typst-diff embeds its own typst (0.14.2 as of
+2026-09) and finds system fonts only; a font the paper's template names
+must be installed on the system to appear in the diff.
 
 ## Usage
 
-    qdiff main paper/                      # dir vs dir
-    qdiff 10fde27 . --entry paper/index.qmd
-    qdiff old-dir new-dir --outdir out --open
-
-Options:
+    qdiff 10fde27 . --entry paper/index.qmd       # ref vs working tree
+    qdiff submitted/ revised/ -o changes.pdf      # dir vs dir
+    qdiff v1 v2 --profile blind --open            # two tags, blind profile
 
 | flag | effect |
 |---|---|
-| `--entry` | entry `.qmd` when it is not `index.qmd`/`paper/index.qmd` |
-| `--outdir` | where the diff and intermediates land (default `<new>/.qdiff`) |
-| `--engine` | `typdiff` (default) or `text` (difflib fallback) |
-| `--execute` | allow code execution during render (default `--no-execute`) |
-| `--keep` | keep materialized git-ref trees for inspection |
+| `--entry` | entry `.qmd` when it is not `index.qmd` / `paper/index.qmd` |
+| `--profile` | quarto profile to render both sides with |
+| `-o`, `--output` | output PDF (default `<new>/.qdiff/trackchanges.pdf`) |
+| `--execute` | run code cells while rendering (default `--no-execute`) |
+| `--compact` | substitutions as blue new text, old text hidden |
+| `--no-line-numbers` | omit line numbers |
+| `--keep` | keep the staged sides and print where they are |
 | `--open` | open the PDF when done |
-| `--no-line-numbers` | omit `#set par.line(numbering: "1")` |
-| `--no-placeholders` | keep figures live instead of `[FIGURE: path]` markers |
 
-Outputs in the outdir: `index-trackchanges.pdf` (the deliverable),
-`index-trackchanges.typ` (the diff source), `intermediate-old.typ` /
-`intermediate-new.typ` (the normalized bare-typst intermediates), plus the
-bibliography, CSL and — with `--no-placeholders` — figure files the diff
-compile resolves next to it.
+Next to the PDF: `<name>-changes.txt` (typst-diff's log of every
+insertion, deletion and modification) and `old.typ` / `new.typ` (the
+prepared diff inputs).
 
-## Normalizations
+## What qdiff does to each side
 
-Between the quarto render and the diff, qdiff rewrites each intermediate so
-the diff is by content, not by accident of the toolchain:
+- **Citations**: pandoc's typst writer emits `@key`; typst label syntax
+  extends over `-`, so `[@key]---because` glues into an unknown label.
+  Bib-key refs become `#cite(<key>)`; `@key[supp]` becomes the named
+  `supplement:` form typst 0.13+ requires. Cross-references pass through.
+- **CSL path**: quarto escapes a leading `.` in the `csl:` path, which
+  typst rejects; the escapes are stripped.
+- **Document metadata**: `set document(...)` rules are removed — typst-diff
+  lays content out inside a container, where typst rejects them. They carry
+  PDF metadata only.
+- **Title block**: title, subtitle, date, abstract, keywords and
+  acknowledgments move out of the template's `article(...)` call into the
+  body. typst-diff treats the title block as one opaque unit and mangles an
+  edited title; as body paragraphs they diff word by word.
+- **Line numbers**: `#set par.line(numbering: "1")` is prepended.
 
-- absolute tree paths → `__QDIFF_OLD__` / `__QDIFF_NEW__` tokens
-- `#show: doc => article(...)` metadata (title, subtitle, abstract, date,
-  keywords, thanks) → flattened into diffable body blocks; typdiff treats
-  the whole show rule as one atomic call and would drop those edits
-- citations: pandoc's typst writer emits `@key` refs, where typst's label
-  syntax extends over `-`, so `[@key]---because` glues into an unknown
-  label and fails the compile. qdiff rewrites bib-key refs to
-  `#cite(<key>)`, which closes the token before trailing text
-  (cross-references like `@eq-did` are not bib keys and pass through)
-- citation supplements: `@key[supp]` → `#cite(<key>, supplement: [supp])`,
-  the named-argument form typst 0.13+ accepts
-- the bibliography and CSL files referenced by the diff are copied next to
-  it so the final compile resolves them — and `.bib` files present on both
-  sides are **merged into the union of their entries** (a revision usually
-  drops keys the original cited; deleted text still needs them)
-- quarto escapes a leading `.` in the CSL path, so a side configured with
-  `csl: .pandoc/csl/x.csl` reaches the `.typ` as `"\.pandoc/csl/x.csl"`,
-  which typst 0.15 rejects; qdiff strips the escapes
-- after the diff, `#ref(<label>)` calls whose label the diff does not
-  define (typdiff comments out deleted code-mode blocks, taking their
-  labels with them) are rewritten as literal struck text — supplement word
-  plus label name — instead of failing the compile
+## Known limits
 
-## Converting a raw-pandoc side
+- **Raw LaTeX is dropped.** Quarto's typst writer drops `{=latex}` blocks,
+  so tables written as raw LaTeX are missing from both sides and from the
+  diff; qdiff warns and names the files. Write tables in a form that renders
+  to typst too (pipe or grid tables, or a generator that emits both).
+- **Footnotes can break typst-diff.** On some documents with footnotes it
+  renders old-side content live and fails ("page configuration is not
+  allowed inside of containers"). qdiff then retries with footnotes set
+  inline as small parenthetical notes, and says so.
+- **Deleted figures show their caption** struck, numbered from the new
+  side's counters ("Figure 0"), since old-side counters do not run.
+- **The bibliography** is shown as a whole old block and a whole new block.
 
-A side that predates quarto (pandoc-include `!include` master, raw-LaTeX
-tables) renders wrong or not at all through quarto. Convert it first, in
-its worktree:
+## Tests
 
-1. build an entry: the master's YAML frontmatter as-is, then one
-   `{{< include section.md >}}` per `!include` line in the master's order,
-   then `# References` and the appendix include (mirroring the quarto
-   side's shape: sections, References heading, appendix, auto-bibliography)
-2. rewrite `!include x.md` → `{{< include x.md >}}` everywhere (sections
-   carry nested includes, e.g. tables)
-3. rewrite pandoc-crossref colon syntax to quarto dash syntax —
-   `{#eq:x}` → `{#eq-x}`, `@eq:x` → `@eq-x` (eq/fig/tbl/sec), labels and
-   refs alike
-4. convert raw-LaTeX tables: `pandoc -f latex -t markdown --wrap=none` per
-   `tables/*.md` containing `\begin{`, then unwrap the `::: {#id}` div
-   pandoc wraps them in, close up the blank line before the `: caption`
-   line, and label the caption `: caption {#tbl-<label>}` — **quarto's
-   crossref filter drops unlabeled table captions entirely**, and the
-   label must be the `\label{...}` the LaTeX carried
-5. prune `{{< include ... >}}` lines whose target file is not committed
-   (main's appendix referenced tables that were never committed)
+    pip install -e ".[test]"
+    pytest
 
-No `_quarto.yml` is needed for the old side: the master's YAML frontmatter
-carries bibliography/csl/numbersections, and qdiff renders the entry file
-directly.
-
-## typdiff patches
-
-qdiff's typdiff engine assumes a typdiff with two fixes beyond v0.1.3
-(both worth reporting upstream; rebuild from a patched tree with
-`cargo install --path <typdiff-src> --force`):
-
-1. **math is atomic in word-level diffs** — `$...$` (no blank line inside)
-   is one token, so the diff can no longer split an equation across diff
-   markers and emit unbalanced delimiters; the token may cross lines for
-   display math but never a blank line
-2. **`#cite(<label>)` in deleted content stays bare** — the escaping rule
-   that neutralizes labels in deleted content (`<` → `\<`) exempted only
-   `#ref(...)`; `\<` is invalid in typst code, so a deleted `#cite(...)`
-   failed the compile. A `#ref`/`#cite` call before the label is exempted
-
-## Known behavior
-
-- citation formatting is not itself diffed (citations render fresh against
-  the new side's bibliography; a changed key or a changed entry shows up as
-  changed rendered text only when the surrounding sentence changed)
-- tables and figures diff coarsely: an edited table is a deleted table
-  followed by an added table
-- references render fresh from the new side's `.bib` (plus anything only on
-  the old side, whose keys are still needed by deleted text)
-- a crashed run can leave a worktree behind; clean up with
-  `git worktree prune` (or list them first with `git worktree list`)
+The end-to-end tests run real quarto and typst-diff (skipped when either
+is missing) and cover the defects of the earlier typdiff-based qdiff: the
+author's tree untouched, sized and deleted figures, math edits, deleted
+citations and em-dash glue, and worktree cleanup for git-ref sides.
