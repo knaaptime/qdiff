@@ -1,0 +1,19 @@
+---
+title: "Toy Paper: Spatial Confounding"
+abstract: >-
+  The parallel trend holds under aspatial conditions. This version has the
+  original abstract text.
+date: 2026-01-01
+bibliography: refs.bib
+---
+
+## Introduction
+
+The spatial multiplier is a function of location and the parallel trend
+holds @knaap2026.
+
+Some anchor text that does not change between versions.
+
+## Method
+
+We estimate a fixed effects model $y = X\beta + \varepsilon$ on the panel.
