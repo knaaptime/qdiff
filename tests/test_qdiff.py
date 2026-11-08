@@ -125,6 +125,8 @@ def test_raw_latex_sources_scans_beside_the_entry(tmp_path):
     (tmp_path / "paper" / "_tbl.md").write_text("```{=latex}\n\\begin{tabular}\n```\n")
     (tmp_path / "old").mkdir()
     (tmp_path / "old" / "x.md").write_text("```{=latex}\n```\n")
+    # a table with a typst block beside the LaTeX reaches the diff
+    (tmp_path / "paper" / "_tbl_both.md").write_text("```{=latex}\n```\n```{=typst}\n```\n")
     assert raw_latex_sources(str(tmp_path), "paper/index.qmd") == ["paper/_tbl.md"]
 
 

@@ -275,11 +275,13 @@ def rewrite(path: str, fn) -> None:
 
 
 def raw_latex_sources(tree: str, entry: str) -> list[str]:
-    """Sources beside the entry carrying raw LaTeX blocks (`{=latex}`).
+    """Sources beside the entry carrying raw LaTeX blocks (`{=latex}`) alone.
 
     Quarto's typst writer drops raw LaTeX, so whatever those blocks hold
     (typically tables) is absent from both sides and cannot appear in the
-    diff.
+    diff. A source that also carries a `{=typst}` block, as every table
+    `ssus_papers.Table` writes does, reaches the diff through that block and
+    is not reported.
     """
     hits = []
     for d, dirs, names in os.walk(os.path.join(tree, os.path.dirname(entry))):
@@ -288,8 +290,9 @@ def raw_latex_sources(tree: str, entry: str) -> list[str]:
             if name.endswith((".qmd", ".md")):
                 path = os.path.join(d, name)
                 with open(path, encoding="utf-8", errors="replace") as f:
-                    if "{=latex}" in f.read():
-                        hits.append(os.path.relpath(path, tree))
+                    text = f.read()
+                if "{=latex}" in text and "{=typst}" not in text:
+                    hits.append(os.path.relpath(path, tree))
     return sorted(hits)
 
 
