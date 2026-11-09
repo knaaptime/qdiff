@@ -19,7 +19,8 @@ import sys
 import tempfile
 
 from qdiff import __version__
-from qdiff.render import find_entry, inline_footnotes, prepare, raw_latex_sources, rewrite
+from qdiff.render import (find_entry, inline_footnotes, mark_redrawn, prepare, raw_latex_sources,
+                          redrawn_images, rewrite)
 from qdiff.sides import QdiffError, Side, release, repo_for, stage
 
 INSTALL_HINT = (
@@ -104,6 +105,9 @@ def run(args: argparse.Namespace) -> str:
             prepare(s.tree, entry, args.execute, args.profile, not args.no_line_numbers)
             for s in sides
         ]
+        redrawn = redrawn_images(typs[0], typs[1])
+        if redrawn:
+            rewrite(typs[1], lambda text: mark_redrawn(text, redrawn))
         log = os.path.splitext(output)[0] + "-changes.txt"
         cmd = [binary, typs[0], typs[1], "-o", output, "-l", log]
         if args.compact:
@@ -125,6 +129,9 @@ def run(args: argparse.Namespace) -> str:
         counts = count_edits(log)
         summary = ", ".join(f"{counts.get(k, 0)} {k}" for k in ("insert", "delete", "modify"))
         print(f"qdiff: {summary}")
+        if redrawn:
+            print(f"qdiff: {len(redrawn)} figure(s) redrawn under the same path, "
+                  "marked in the diff: " + ", ".join(redrawn))
         print(f"qdiff: change log {log}")
         print(f"qdiff: {output}")
         return output

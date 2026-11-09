@@ -16,7 +16,8 @@ import zlib
 import pytest
 
 from qdiff.cli import main, typst_diff_binary
-from qdiff.render import flatten_metadata, inline_footnotes, raw_latex_sources, strip_document_sets
+from qdiff.render import (REDRAWN_MARK, flatten_metadata, inline_footnotes, mark_redrawn,
+                          raw_latex_sources, redrawn_images, strip_document_sets)
 from qdiff.sides import QdiffError
 
 TOY = os.path.join(os.path.dirname(__file__), "toy")
@@ -51,15 +52,15 @@ BIB = """@article{knaap2026,
 """
 
 
-def png(path: str) -> None:
-    """A 1x1 PNG, enough for typst to lay out an image."""
+def png(path: str, rgb: bytes = b"\xff\x00\x00") -> None:
+    """A 1x1 PNG of one color, enough for typst to lay out an image."""
     def chunk(tag: bytes, data: bytes) -> bytes:
         return (struct.pack(">I", len(data)) + tag + data
                 + struct.pack(">I", zlib.crc32(tag + data)))
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n"
                 + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
-                + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+                + chunk(b"IDAT", zlib.compress(b"\x00" + rgb))
                 + chunk(b"IEND", b""))
 
 
@@ -130,6 +131,24 @@ def test_raw_latex_sources_scans_beside_the_entry(tmp_path):
     assert raw_latex_sources(str(tmp_path), "paper/index.qmd") == ["paper/_tbl.md"]
 
 
+def test_redrawn_images_compares_files_under_the_same_path(tmp_path):
+    for side in ("old", "new"):
+        (tmp_path / side / "figures").mkdir(parents=True)
+        (tmp_path / side / "d.typ").write_text(
+            '#box(image("figures/a.png"))\n#box(image("figures/b.png", width: 50%))\n'
+            '#image("figures/c.png")\n')
+    png(str(tmp_path / "old" / "figures" / "a.png"))
+    png(str(tmp_path / "new" / "figures" / "a.png"), rgb=b"\x00\x00\xff")   # redrawn
+    png(str(tmp_path / "old" / "figures" / "b.png"))
+    png(str(tmp_path / "new" / "figures" / "b.png"))                         # unchanged
+    png(str(tmp_path / "new" / "figures" / "c.png"))                         # new on this side
+    old, new = str(tmp_path / "old" / "d.typ"), str(tmp_path / "new" / "d.typ")
+    assert redrawn_images(old, new) == ["figures/a.png"]
+    marked = mark_redrawn((tmp_path / "new" / "d.typ").read_text(), ["figures/a.png"])
+    assert marked.count(REDRAWN_MARK) == 1
+    assert REDRAWN_MARK + '#box(image("figures/a.png"))' in marked
+
+
 # --- end to end -------------------------------------------------------------
 
 @e2e
@@ -162,6 +181,16 @@ def test_sized_figure_on_both_sides(tmp_path):
     fig = "![A map.](fig.png){#fig-map width=50%}\n\n"
     old = paper(tmp_path, "old", fig + "As @fig-map shows, it held.\n")
     new = paper(tmp_path, "new", fig + "As @fig-map shows, it fails.\n")
+    assert edits(qdiff(old, new, tmp_path)) >= 1
+
+
+@e2e
+def test_redrawn_figure_is_marked(tmp_path):
+    """typst-diff compares the image call, not the file: a redrawn figure showed 0 edits."""
+    body = "![A map.](fig.png){#fig-map width=50%}\n\nAs @fig-map shows, it held.\n"
+    old = paper(tmp_path, "old", body)
+    new = paper(tmp_path, "new", body)
+    png(os.path.join(new, "fig.png"), rgb=b"\x00\x00\xff")
     assert edits(qdiff(old, new, tmp_path)) >= 1
 
 

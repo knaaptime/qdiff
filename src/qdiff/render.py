@@ -12,6 +12,7 @@ its own files, bibliography and labels.
 
 from __future__ import annotations
 
+import filecmp
 import os
 import re
 import subprocess
@@ -294,6 +295,42 @@ def raw_latex_sources(tree: str, entry: str) -> list[str]:
                 if "{=latex}" in text and "{=typst}" not in text:
                     hits.append(os.path.relpath(path, tree))
     return sorted(hits)
+
+
+# An image call in quarto's typst: `#box(image("path", ...))` or `#image("path"`.
+IMAGE_RE = re.compile(r'#(?:box\()?image\("([^"]+)"')
+REDRAWN_MARK = "[Figure redrawn.] "
+
+
+def redrawn_images(old_typ: str, new_typ: str) -> list[str]:
+    """Image paths the new side shares with the old side but whose file changed.
+
+    typst-diff compares the image call, not the file it loads, so a figure
+    redrawn under the same path shows no change. Paths resolve against each
+    side's .typ. An image the old side lacks is left to typst-diff, which
+    shows a new figure as an insertion already.
+    """
+    old_dir, new_dir = os.path.dirname(old_typ), os.path.dirname(new_typ)
+    with open(new_typ, encoding="utf-8") as f:
+        paths = dict.fromkeys(IMAGE_RE.findall(f.read()))
+    changed = []
+    for p in paths:
+        old_file, new_file = os.path.join(old_dir, p), os.path.join(new_dir, p)
+        if (os.path.isfile(old_file) and os.path.isfile(new_file)
+                and not filecmp.cmp(old_file, new_file, shallow=False)):
+            changed.append(p)
+    return changed
+
+
+def mark_redrawn(text: str, paths: list[str]) -> str:
+    """Put a marker before each use of a redrawn image, on the new side only.
+
+    typst-diff then sets the marker as an insertion beside the figure.
+    """
+    for p in paths:
+        pattern = re.compile(r'#(?:box\()?image\("' + re.escape(p) + '"')
+        text = pattern.sub(lambda m: REDRAWN_MARK + m.group(0), text)
+    return text
 
 
 def prepare(tree: str, entry: str, execute: bool, profile: str | None,

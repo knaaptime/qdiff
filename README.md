@@ -74,6 +74,12 @@ prepared diff inputs).
   body. typst-diff treats the title block as one opaque unit and mangles an
   edited title; as body paragraphs they diff word by word.
 - **Line numbers**: `#set par.line(numbering: "1")` is prepended.
+- **Redrawn figures**: typst-diff compares the image call, not the file it
+  loads, so a figure redrawn under the same path showed no change. qdiff
+  compares each image file the two sides share and puts "[Figure redrawn.]"
+  before each changed one on the new side, which the diff sets as an
+  insertion; it names them in its summary. A figure new to the prose is
+  left to typst-diff, which shows it inserted.
 
 ## Known limits
 
@@ -96,5 +102,5 @@ prepared diff inputs).
 
 The end-to-end tests run real quarto and typst-diff (skipped when either
 is missing) and cover the defects of the earlier typdiff-based qdiff: the
-author's tree untouched, sized and deleted figures, math edits, deleted
+author's tree untouched, sized, deleted, and redrawn figures, math edits, deleted
 citations and em-dash glue, and worktree cleanup for git-ref sides.
